@@ -20,6 +20,8 @@ function stabilization_coefficients(t)
     for i = 1:1:n_ele
         j = 1
         l = 0
+        u_mid_tmp = zeros(2)
+
         while (j <= node_per_element)
             actual_node_coordinates = model.grid.node_coords[model.grid.cell_node_ids[i][j]]
             k = j + 1
@@ -31,17 +33,20 @@ function stabilization_coefficients(t)
             next_node_coordinates = model.grid.node_coords[model.grid.cell_node_ids[i][k]]
             node_mean = 0.5 .* (actual_node_coordinates + next_node_coordinates)
 
-            u_mid[i, 1] = velocity(node_mean, t)[1]
-            u_mid[i, 2] = velocity(node_mean, t)[2]
+            u_mid_tmp[1] = velocity(node_mean, t)[1]
+            u_mid_tmp[2] = velocity(node_mean, t)[2]
 
-            l_tmp = norm((actual_node_coordinates - next_node_coordinates) ⋅ u_mid[i, :]) / norm(u_mid[i, :])
+            l_tmp = norm((actual_node_coordinates - next_node_coordinates) ⋅ u_mid_tmp) / norm(u_mid_tmp)
             if l_tmp>l
                 l = l_tmp
             end
-
+            u_mid[i, 1] = u_mid[i, 1] + u_mid_tmp[1]
+            u_mid[i, 2] = u_mid[i, 2] + u_mid_tmp[2]
              j = j + 1
 
         end
+        u_mid[i, 1] = u_mid[1, 1]/node_per_element
+        u_mid[i, 2] = u_mid[1, 2] /node_per_element
         h_element[i] = l
 
     end
@@ -50,12 +55,12 @@ function stabilization_coefficients(t)
     tau_ps = zeros(n_ele)
     tau_bk = zeros(n_ele)
     for i = 1:1:n_ele
-        u = norm(u_mid[i, :])
+        u = norm(u_mid[i, :])*10
         h = h_element[i]
         tau_su_adv = h / (2 * u)
         tau_su_diff = h * h / (4 * nu)
         tau_su_unst = h / (2 * u)
-
+        
         tau_ps_adv = h / (2 * nu)
         tau_ps_diff = h * h / (4 * nu)
 
