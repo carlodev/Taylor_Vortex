@@ -1,6 +1,8 @@
 using Gridap
 using Gridap.Fields
 using Gridap.CellData
+using Gridap.Arrays
+
 using FillArrays
 #using GridapGmsh
 #using GridapDistributed
@@ -21,13 +23,14 @@ D = 0.5 #0.5 [m] vortex dimension
 Vs = 1 #1[m/s]swirling speed
 Ua = 0.3 #0.3 [m/s]convective velocity in x
 Va = 0.2 #0.2 [m/s]convective velocity in y
-nu = 0.1 #0.001 m2/s 
+nu = 0.001 #0.001 m2/s 
 N = 64; #cells per dimensions
 
-stabilization = 1
+stabilization = 2
 """
-1 complex time dependant 
-2 easy
+1 complex time dipendant stabilization, not enought
+2 very easy stabilization, it WORKS
+2.1 improvement
 3 no stabilizaztion
 """
 initial_condition = false #print model of initial condition
@@ -62,15 +65,19 @@ order = 2
 reffeᵤ = ReferenceFE(lagrangian, VectorValue{2,Float64}, order)
 V = TestFESpace(model, reffeᵤ, conformity=:H1)
 
-#reffeₚ = ReferenceFE(lagrangian,Float64,order-1;space=:P)
-reffeₚ = ReferenceFE(lagrangian, Float64, order - 1)
-#Q = TestFESpace(model,reffeₚ,conformity=:L2, constraint=:zeromean)
-Q = TestFESpace(model, reffeₚ)
+reffeₚ = ReferenceFE(lagrangian,Float64,order-1; space=:P)
+#reffeₚ = ReferenceFE(lagrangian, Float64, order - 1)
+#Q = TestFESpace(model,reffeₚ, conformity=:L2, constraint=:zeromean)
+Q = TestFESpace(model,reffeₚ, conformity=:L2, dirichlet_tags="interior")
+
+#Since we impose Dirichlet boundary conditions on the entire boundary ∂Ω, the mean value of the pressure is constrained to zero in order have a well posed problem
+#Q = TestFESpace(model, reffeₚ)
 
 
-
+#Transient is just for the fact that the boundary conditions change with time
 U = TransientTrialFESpace(V)
-P = TrialFESpace(Q) #?transient
+#P = TrialFESpace(Q) #?transient
+P = TransientTrialFESpace(Q, pa) #?transient
 
 
 
@@ -79,7 +86,7 @@ X = TransientMultiFieldFESpace([U, P])
 
 degree = order
 Ω = Triangulation(model)
-dΩ = Measure(Ω, degree)
+dΩ = Measure(Ω, 2*degree)
 
 if initial_condition
   #Computing Initial condition for checking
@@ -100,42 +107,75 @@ c(u, v) = ∫(v ⊙ (conv ∘ (u, ∇(u))))dΩ
 
 #Stabilization
 if stabilization == 1
-  include("StabilizeComputationFFF.jl")
-  """
+  include("StabilizeComputationFF.jl")
+  
+  #stab_su(t, (u, p), (v, q)) = ∫(tau_su(t) ⋅ ((u ⋅ ∇(v))' ⊙ (conv ∘ (u, ∇(u))) + (u ⋅ ∇(v))' ⊙ ∂t(u) + (u ⋅ ∇(v))' ⊙ ∇(p)))dΩ
   stab_su(t, (u, p), (v, q)) = ∫(tau_su(t) ⋅ ((u ⋅ ∇(v))' ⊙ (conv ∘ (u, ∇(u))) + (u ⋅ ∇(v))' ⊙ ∂t(u) + (u ⋅ ∇(v))' ⊙ ∇(p)))dΩ
-  stab_bk(t, u, v) = ∫(tau_bk(t) ⋅ (nu .* ∇(v) ⊙ ∇(u)))dΩ
+  stab_bk(t, u, v) = ∫(tau_bk(t) ⋅ ((∇⋅ v) ⊙ (∇ ⋅ u)))dΩ
   stab_ps(t, (u, p), (v, q)) = ∫(tau_ps(t) ⋅ ((∇(q)) ⊙ ∂t(u) + (∇(q)) ⊙ (conv ∘ (u, ∇(u))) + (∇(q)) ⋅ (∇(p))))dΩ
+
   """
   stab_su(t, (u, p), (v, q)) = ∫(tau_su(t,u) ⋅ ((u ⋅ ∇(v))' ⊙ (conv ∘ (u, ∇(u))) + (u ⋅ ∇(v))' ⊙ ∂t(u) + (u ⋅ ∇(v))' ⊙ ∇(p)))dΩ
   stab_bk(t, u, v) = ∫(tau_bk(t,u) ⋅ (nu .* ∇(v) ⊙ ∇(u)))dΩ
   stab_ps(t, (u, p), (v, q)) = ∫(tau_ps(t,u) ⋅ ((∇(q)) ⊙ ∂t(u) + (∇(q)) ⊙ (conv ∘ (u, ∇(u))) + (∇(q)) ⋅ (∇(p))))dΩ
-  
+  """
   res(t, (u, p), (v, q)) = a(t, (u, p), (v, q)) + c(u, v) + m(∂t(u), v) + stab_su(t, (u, p), (v, q)) + stab_bk(t, u, v) + stab_ps(t, (u, p), (v, q))
 elseif stabilization == 2
   dim= num_cell_dims(Ω)
   h = lazy_map(h->h^(1/dim),get_cell_measure(Ω))
-  tau_su_adv(u) = (h ./ (2 * u))^(-r)
-  tau_su_diff(u) = (h * h ./ (4 * nu))^(-r)
-  tau_su_unst(u) =( h ./ (2 * u))^(-r)
-  r = 2 #Tezduyar
+  u_0 = Vs+Ua+Va
+  r = 2
+  tau_su_adv = (h ./ (2 .* u_0)).^(-r)
+  tau_su_diff = (h .* h ./ (4 * nu)).^(-r)
+  tau_su_unst =( h ./ (2 .* u_0)).^(-r)
 
-  tau_su(u) = (tau_su_adv(u) + tau_su_diff(u) + tau_su_unst(u))^(-1 / r)
-  tau_ps(u) = (tau_su_adv(u) + tau_su_diff(u))^(-1 / r)
-  tau_bk(u) = u_0^2 * tau_ps
+   #Tezduyar
 
-  stab_su(t, (u, p), (v, q)) = ∫(tau_su(u) ⋅ ((u ⋅ ∇(v))' ⊙ (conv ∘ (u, ∇(u))) + (u ⋅ ∇(v))' ⊙ ∂t(u) + (u ⋅ ∇(v))' ⊙ ∇(p)))dΩ
-  stab_bk(t, u, v) = ∫(tau_bk(u) ⋅ (nu .* ∇(v) ⊙ ∇(u)))dΩ
-  stab_ps(t, (u, p), (v, q)) = ∫(tau_ps(u) ⋅ ((∇(q)) ⊙ ∂t(u) + (∇(q)) ⊙ (conv ∘ (u, ∇(u))) + (∇(q)) ⋅ (∇(p))))dΩ
+  tau_su= (tau_su_adv + tau_su_diff .+ tau_su_unst).^(-1 / r)
+  tau_ps = (tau_su_adv + tau_su_diff).^(-1 / r)
+  tau_bk = u_0^2 .* tau_ps
+
+  stab_su(t, (u, p), (v, q)) = ∫(tau_su⋅ ((u ⋅ ∇(v))' ⊙ (conv ∘ (u, ∇(u))) + (u ⋅ ∇(v))' ⊙ ∂t(u) + (u ⋅ ∇(v))' ⊙ ∇(p)))dΩ
+  stab_bk(t, u, v) = ∫(tau_bk ⋅ (∇(v) ⊙ ∇(u)))dΩ
+  stab_ps(t, (u, p), (v, q)) = ∫(tau_ps ⋅ ((∇(q)) ⊙ ∂t(u) + (∇(q)) ⊙ (conv ∘ (u, ∇(u))) + (∇(q)) ⋅ (∇(p))))dΩ
 
 
   res(t, (u, p), (v, q)) = a(t, (u, p), (v, q)) + c(u, v) + m(∂t(u), v) + stab_su(t, (u, p), (v, q)) + stab_bk(t, u, v) + stab_ps(t, (u, p), (v, q))
 
-elseif stabilization == 3
+elseif stabilization == 2.1
+  dim= num_cell_dims(Ω)
+#h = lazy_map(h->h^(1/dim),get_cell_measure(Ω))
+  h = 2*D/N
+  u1(t) = velocity(t - dt)
+  r = 2    #Tezduyar
+
+  tau_su_adv(t) = (h ./ (2 ⊙ u1(t))).^(-r)
+  tau_su_diff(t) = (h .* h ./ (4 * nu)).^(-r)
+  tau_su_unst(t) =( h ./ (2 .* u1(t))).^(-r)
+
+
+  tau_su(t) = (tau_su_adv(t) + tau_su_diff(t) + tau_su_unst(t)).^(-1 / r)
+  tau_ps(t) = (tau_su_adv(t) + tau_su_diff(t)).^(-1 / r)
+  tau_bk(t) = u_0^2 .* tau_ps(t)
+
+  stab_su(t, (u, p), (v, q)) = ∫(tau_su(t)⋅ ((u ⋅ ∇(v))' ⊙ (conv ∘ (u, ∇(u))) + (u ⋅ ∇(v))' ⊙ ∂t(u) + (u ⋅ ∇(v))' ⊙ ∇(p)))dΩ
+  stab_bk(t, u, v) = ∫(tau_bk(t) ⋅ (∇(v) ⊙ ∇(u)))dΩ
+  stab_ps(t, (u, p), (v, q)) = ∫(tau_ps(t) ⋅ ((∇(q)) ⊙ ∂t(u) + (∇(q)) ⊙ (conv ∘ (u, ∇(u))) + (∇(q)) ⋅ (∇(p))))dΩ
+
+
+  res(t, (u, p), (v, q)) = a(t, (u, p), (v, q)) + c(u, v) + m(∂t(u), v) + stab_su(t, (u, p), (v, q)) + stab_bk(t, u, v) + stab_ps(t, (u, p), (v, q))
+
+
+
+
+elseif stabilization == 4
+
   res(t, (u, p), (v, q)) = a(t, (u, p), (v, q)) + c(u, v) + m(∂t(u), v)
 end
 
 
 #writevtk(Ω,"Tau_r1",cellfields=[ "tau_su"=>tau_su(0), "tau_ps"=>tau_ps(0), "tau_bk"=>tau_bk(0)])
+#writevtk(Ω,"Tau_r1",cellfields=[ "tau_su"=>tau_su, "tau_ps"=>tau_ps, "tau_bk"=>tau_bk])
 
 
 op = TransientFEOperator(res, X, Y)
@@ -147,24 +187,23 @@ P0 = P(0.0)
 X0 = X(0.0)
 
 uh0 = interpolate_everywhere(velocity(0), U0)
-
 ph0 = interpolate_everywhere(pa(0), P0)
+
 xh0 = interpolate_everywhere([uh0, ph0], X0)
 
 
 t0 = 0.0
-dt = 0.005 # Vs/(2*D)
-tF = 0.1
+dt = 0.5 # Vs/(2*D)
+dt < (Vs+Ua+Vs+Va)/(2*D/N)
+tF = 20
 
 θ = 0.5
-print("Nls")
 
 using LineSearches: BackTracking
 nls = NLSolver(
   show_trace=true, method=:newton, linesearch=BackTracking())
 
 ode_solver = ThetaMethod(nls, dt, θ)
-print("starting solving")
 
 sol_t = solve(ode_solver, op, xh0, t0, tF)
 
