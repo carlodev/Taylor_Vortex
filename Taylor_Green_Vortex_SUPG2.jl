@@ -41,7 +41,9 @@ initial_condition = true #print model of initial condition
 domain = (-D, D, -D, D)
 partition = (N, N)
 model = CartesianDiscreteModel(domain, partition; isperiodic=(true, true))
-#writevtk(model,"model")
+include("BCS.jl")
+
+writevtk(model,"model")
 
 #ANALITICAL SOLUTION, used also for initial condition
 Tx(x, t) = pi / D * (x[1] - Ua * t)
@@ -50,7 +52,7 @@ Et(t) = exp(-(2 * ν * t * pi^2) / (D^2))
 ua(x, t) = Ua - Vs * cos(Tx(x, t)) * sin(Ty(x, t)) * Et(t)
 va(x, t) = Va + Vs * sin(Tx(x, t)) * cos(Ty(x, t)) * Et(t)
 velocity(x, t) = VectorValue(ua(x, t), va(x, t))
-pa(x, t) = -(Vs^2 / 4) * (cos(2 * Tx(x, t)) * cos(2 * Ty(x, t))) * Et(t)^2
+pa(x, t) = -(Vs^2 / 4) * (cos(2 * Tx(x, t)) + cos(2 * Ty(x, t))) * Et(t)^2
 ωa(x, t) = 2 * Vs * pi / D * cos(Tx(x, t)) * cos(Ty(x, t)) * Et(t)^2
 
 ua(t::Real) = x -> ua(x, t)
@@ -60,11 +62,10 @@ pa(t::Real) = x -> pa(x, t)
 ωa(t::Real) = x -> ωa(x, t)
 
 
-order = 1 
+order = 1
 reffeᵤ = ReferenceFE(lagrangian, VectorValue{2,Float64}, order)
 V = TestFESpace(model, reffeᵤ, conformity=:H1)
 reffeₚ = ReferenceFE(lagrangian,Float64,order)
-include("BCS.jl")
 #reffeₚ = ReferenceFE(lagrangian,Float64,order-1; space=:P)
 #reffeₚ = ReferenceFE(lagrangian, Float64, order - 1)
 #Q = TestFESpace(model,reffeₚ, conformity=:L2, constraint=:zeromean)
@@ -158,7 +159,7 @@ xh0 = interpolate_everywhere([uh0, ph0], X0)
 t0 = 0.0
 dt = 0.1 # Vs/(2*D)
 dt < (Vs+Ua+Vs+Va)/(2*D/N)
-tF = 5
+tF = 10
 
 θ = 0.5
 

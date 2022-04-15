@@ -17,4 +17,4 @@ new_entity = num_entities(labels) + 1
 for centre_point in cell_node
  labels.d_to_dface_to_entity[1][centre_point] = new_entity
 end
-add_tag_from_tags!(labels,"centre",[new_entity])
+add_tag!(labels,"centre", [new_entity])

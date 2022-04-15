@@ -50,7 +50,7 @@ Et(t) = exp(-(2 * nu * t * pi^2) / (D^2))
 ua(x, t) = Ua - Vs * cos(Tx(x, t)) * sin(Ty(x, t)) * Et(t)
 va(x, t) = Va + Vs * sin(Tx(x, t)) * cos(Ty(x, t)) * Et(t)
 velocity(x, t) = VectorValue(ua(x, t), va(x, t))
-pa(x, t) = -(Vs^2 / 4) * (cos(2 * Tx(x, t)) * cos(2 * Ty(x, t))) * Et(t)^2
+pa(x, t) = -(Vs^2 / 4) * (cos(2 * Tx(x, t)) + cos(2 * Ty(x, t))) * Et(t)^2
 ωa(x, t) = 2 * Vs * pi / D * cos(Tx(x, t)) * cos(Ty(x, t)) * Et(t)^2
 
 ua(t::Real) = x -> ua(x, t)
