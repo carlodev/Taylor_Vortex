@@ -55,6 +55,8 @@ velocity(x, t) = VectorValue(ua(x, t), va(x, t))
 pa(x, t) = -(Vs^2 / 4) * (cos(2 * Tx(x, t)) + cos(2 * Ty(x, t))) * Et(t)^2
 ωa(x, t) = 2 * Vs * pi / D * cos(Tx(x, t)) * cos(Ty(x, t)) * Et(t)^2
 
+ω₀=  2 * Vs * pi / D 
+
 ua(t::Real) = x -> ua(x, t)
 va(t::Real) = x -> va(x, t)
 velocity(t::Real) = x -> velocity(x, t)
@@ -63,7 +65,7 @@ pa(t::Real) = x -> pa(x, t)
 
 
 order = 1
-reffeᵤ = ReferenceFE(lagrangian, VectorValue{2,Float64}, order)
+reffeᵤ = ReferenceFE(lagrangian, VectorValue{2,Float64}, 2*order)
 V = TestFESpace(model, reffeᵤ, conformity=:H1)
 reffeₚ = ReferenceFE(lagrangian,Float64,order)
 #reffeₚ = ReferenceFE(lagrangian,Float64,order-1; space=:P)
@@ -86,7 +88,7 @@ P = TransientTrialFESpace(Q, pa) #?transient
 Y = MultiFieldFESpace([V, Q]) #?transient
 X = TransientMultiFieldFESpace([U, P])
 
-degree = 2
+degree = 4
 Ω = Triangulation(model)
 dΩ = Measure(Ω, degree)
 
@@ -111,20 +113,24 @@ Rc(u) = ∇⋅u
 h = lazy_map(h->h^(1/2),get_cell_measure(Ω))
 
 function τ(u,h)
-    
+    β=1.3
     τ₂ = h^2/(4*ν)
     val(x) = x
     val(x::Gridap.Fields.ForwardDiff.Dual) = x.value
-
     u = val(norm(u))
+    
     if iszero(u)
         return τ₂
+        
     end
-    τ₁ = h/(2*u)
-    τ₃ = dt/2
+    τ₃ =  0 #dt/2 #h/(2*u)
+
+    τ₁ = h/(2*β) #h/(2*u)
+    
     return 1/(1/τ₁ + 1/τ₂ + 1/τ₃)
   
 end
+
 
 τb(u,h) = (u⋅u)*τ(u,h)
 
@@ -134,6 +140,8 @@ var_equations(t,(u,p),(v,q)) = ∫(
     + v⊙Rm(t,(u,p)) # Other momentum terms
     + q*Rc(u)
  )dΩ # Continuity
+
+
 stab_equations(t,(u,p),(v,q)) = ∫(  (τ∘(u,h)*(u⋅∇(v) + ∇(q)))⊙Rm(t,(u,p)) # First term: SUPG, second term: PSPG
     + τb∘(u,h)*(∇⋅v)⊙Rc(u) # Bulk viscosity. Try commenting out both stabilization terms to see what happens in periodic and non-periodic cases
 )dΩ
@@ -141,6 +149,7 @@ stab_equations(t,(u,p),(v,q)) = ∫(  (τ∘(u,h)*(u⋅∇(v) + ∇(q)))⊙Rm(t,
 res(t,(u,p),(v,q)) = var_equations(t,(u,p),(v,q)) + stab_equations(t,(u,p),(v,q))
 op = TransientFEOperator(res,X,Y)
 nls = NLSolver(show_trace=true, method=:newton, linesearch=MoreThuente(), iterations=30)
+
 solver = FESolver(nls)
 
 
@@ -157,9 +166,9 @@ xh0 = interpolate_everywhere([uh0, ph0], X0)
 
 
 t0 = 0.0
-dt = 0.1 # Vs/(2*D)
+dt = 0.01 # Vs/(2*D)
 dt < (Vs+Ua+Vs+Va)/(2*D/N)
-tF = 10
+tF = 0.5
 
 θ = 0.5
 
@@ -177,7 +186,13 @@ createpvd("TV_2d") do pvd
     uh_tn = xh_tn[1]
     ph_tn = xh_tn[2]
     ωh_tn = ∇ × uh_tn
-    pvd[tn] = createvtk(Ω, "Results/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "ωh" => ωh_tn])
+    ωn = ωh_tn./ω₀
+    p_analytic = pa(_t_nn)
+    u_analytic = velocity(_t_nn)
+    w_analytic = ωa(_t_nn)
+    pvd[tn] = createvtk(Ω, "Results/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "wh" => ωh_tn,  "wn" => ωn, "p_analytic"=>p_analytic, "u_analytic"=>u_analytic,  "w_analytic"=>w_analytic])
   end
 
 end
+
+CFL = 1*dt./h
