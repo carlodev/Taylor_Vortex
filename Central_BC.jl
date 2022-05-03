@@ -1,6 +1,11 @@
+"""
+In the Taylor-Green Vortex the central node of the domain is estracted in order to set it as a boundary condition for pressure
+"""
+
 labels = get_face_labeling(model)
 h0 = 2*D/N
 eps1 = h0/10
+
 vt(i) = VectorValue(y,i)
 v1(v) = v[1]
 v2(v) = v[2]
