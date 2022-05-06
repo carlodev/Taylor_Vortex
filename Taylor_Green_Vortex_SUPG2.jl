@@ -27,13 +27,15 @@ hf = VectorValue(0,0)
 
 #ODE settings
 cell_h = 2*D/N
-CFL = 0.03 #2*dt./h
+CFL = 0.032 #2*dt./h
 t0 = 0.0
 dt = CFL * cell_h/2 #0.0001 
+
 δt = 2*D/Vs
 tF = 2.5*δt
 Ntimestep = (tF-t0)/dt
 θ = 0.5
+tF = 100*dt
 
 initial_condition = false #print model of initial condition
 
@@ -90,7 +92,7 @@ P = TransientTrialFESpace(Q, pa) #?transient
 Y = MultiFieldFESpace([V, Q]) #?transient
 X = TransientMultiFieldFESpace([U, P])
 
-degree = 4
+degree = 2
 Ω = Triangulation(model)
 dΩ = Measure(Ω, degree)
 
@@ -115,7 +117,10 @@ Rc(u) = ∇⋅u
 
 
 function τ(u,h)
-    β=1.3
+    β=1
+    c₁= 1
+    c₂=16
+    r = 2
     τ₂ = h^2/(4*ν)
     val(x) = x
     val(x::Gridap.Fields.ForwardDiff.Dual) = x.value
@@ -125,16 +130,16 @@ function τ(u,h)
         return τ₂
         
     end
-    τ₃ =  dt/2 #h/(2*u) #0  dt^2/2 #
-
-    τ₁ = h/(2*u) #h/(2*β) 
-    return 1/(1/τ₁ + 1/τ₂ + 1/τ₃)
+    τ₃ =  dt/2 #h/(2*u) 
+    τ₁ = h/(2*u) #h/(2*u) #
+    #return 1/(1/τ₁ + 1/τ₂ + 1/τ₃)
+    return (1/τ₁^r + c₁^2/τ₂^r + c₂/τ₃^r)^(-1/r)
     
 end
 
 
+#τb(u,h) = (u⋅u)*τ(u,h)
 τb(u,h) = (u⋅u)*τ(u,h)
-
 
 var_equations(t,(u,p),(v,q)) = ∫(
     ν*∇(v)⊙∇(u) # Viscous term
@@ -144,7 +149,7 @@ var_equations(t,(u,p),(v,q)) = ∫(
 
 
 stab_equations(t,(u,p),(v,q)) = ∫(  (τ∘(u,h)*(u⋅∇(v) + ∇(q)))⊙Rm(t,(u,p)) # First term: SUPG, second term: PSPG
-    + τb∘(u,h)*(∇⋅v)⊙Rc(u) # Bulk viscosity. Try commenting out both stabilization terms to see what happens in periodic and non-periodic cases
+    +τb∘(u,h)*(∇⋅v)⊙Rc(u) # Bulk viscosity. Try commenting out both stabilization terms to see what happens in periodic and non-periodic cases
 )dΩ
 
 
@@ -169,7 +174,8 @@ ph0 = interpolate_everywhere(pa(0), P0)
 xh0 = interpolate_everywhere([uh0, ph0], X0)
 
 
-
+tau =τ∘(uh0, h)
+writevtk(Ω, "Tau", cellfields=["tau" => tau])
 
 
 ode_solver = ThetaMethod(nls, dt, θ)
@@ -178,10 +184,14 @@ sol_t = solve(ode_solver, op, xh0, t0, tF)
 
 
 _t_nn = t0
+iteration = 0
 createpvd("TV_2d") do pvd
   for (xh_tn, tn) in sol_t
     global _t_nn
     _t_nn += dt
+    global iteration
+    iteration += 1
+    println("it_num = $iteration\n")
     uh_tn = xh_tn[1]
     ph_tn = xh_tn[2]
     ωh_tn = ∇ × uh_tn
@@ -189,9 +199,9 @@ createpvd("TV_2d") do pvd
     p_analytic = pa(_t_nn)
     u_analytic = velocity(_t_nn)
     w_analytic = ωa(_t_nn)
-    if !mod(_t_nn,100)
+    #if mod(iteration, 10)<1
       pvd[tn] = createvtk(Ω, "Results/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "wh" => ωh_tn,  "wn" => ωn, "p_analytic"=>p_analytic, "u_analytic"=>u_analytic,  "w_analytic"=>w_analytic])
-    end
+    #end
   end
 
 end
