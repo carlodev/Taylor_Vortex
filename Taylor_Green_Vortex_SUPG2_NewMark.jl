@@ -27,7 +27,7 @@ hf = VectorValue(0.0,0.0)
 
 #ODE settings
 cell_h = 2*D/N
-CFL = 0.032 #2*dt./h
+CFL = 0.3 #2*dt./h
 t0 = 0.0
 
 dt = CFL * cell_h/2 #0.0001 
@@ -35,7 +35,8 @@ dt = CFL * cell_h/2 #0.0001
 δt = 2*D/Vs
 tF = 2.5*δt
 Ntimestep = (tF-t0)/dt
-θ = 0.5
+θ = 1
+
 tF = 100*dt
 
 initial_condition = false #print model of initial condition
@@ -177,20 +178,20 @@ ph0 = interpolate_everywhere(pa(0), P0)
 xh0 = interpolate_everywhere([uh0, ph0], X0)
 
 
-tau =τ∘(uh0, h)
-writevtk(Ω, "Tau", cellfields=["tau" => tau])
+#ode_solver = ThetaMethod(nls, dt, θ)
 
-θ=1
-ode_solver = ThetaMethod(nls, dt, θ)
+γ = 0.5
+β = 0.25
+ode_solver = Newmark(nls, dt, γ,β)
 
 
 
-sol_t = solve(ode_solver, op, xh0, t0, tF)
+sol_t = solve(ode_solver, op, (xh0,xh0,xh0), t0, tF)
 
 
 _t_nn = t0
 iteration = 0
-createpvd("TV_2d_t") do pvd
+createpvd("TV_2d_2") do pvd
   for (xh_tn, tn) in sol_t
     global _t_nn
     _t_nn += dt
@@ -205,9 +206,8 @@ createpvd("TV_2d_t") do pvd
     p_analytic = pa(_t_nn)
     u_analytic = velocity(_t_nn)
     w_analytic = ωa(_t_nn)
-    fluct_u = Rm(tn, (uh_tn, ph_tn))
     #if mod(iteration, 10)<1
-      pvd[tn] = createvtk(Ω, "Results2/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "Δu" => Δu, "wh" => ωh_tn,  "wn" => ωn, "p_analytic"=>p_analytic, "u_analytic"=>u_analytic,  "w_analytic"=>w_analytic, "u_p"=>fluct_u])
+      pvd[tn] = createvtk(Ω, "Results2/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "Δu" => Δu, "wh" => ωh_tn,  "wn" => ωn, "p_analytic"=>p_analytic, "u_analytic"=>u_analytic,  "w_analytic"=>w_analytic])
     #end
   end
 
