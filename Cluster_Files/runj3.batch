@@ -1,0 +1,4 @@
+#!/bin/sh
+$HOME/julia-1.7.2/bin/julia -p 1 Taylor_Green_Vortex_SUPG2_Alpha_CFL.jl
+
+

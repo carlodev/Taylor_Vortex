@@ -5,11 +5,13 @@ using Gridap.Arrays
 using LineSearches: BackTracking, Static, MoreThuente
 using FillArrays
 
+using JLD2
 """
 Taylor Green 2D vortex SUPG
 with stabilization
 velocity 1st order
 pressure 1st order
+ODE solver: GeneralizedAlpha 
 """
 
 #Parameters
@@ -23,24 +25,26 @@ Va = 0.2 #0.2 [m/s]convective velocity in y
 
 order = 1 #Order of pressure and velocity
 N = 64; #cells per dimensions
-hf = VectorValue(0.0,0.0)
 
 #ODE settings
 cell_h = 2*D/N
-CFL = 0.3 #2*dt./h
+
+CFL = 0.32 #2*dt./h
+
 t0 = 0.0
-
 dt = CFL * cell_h/2 #0.0001 
+δt = 2*D/Vs #Non dimensional time
+tF = 0.025*δt
 
-δt = 2*D/Vs
-tF = 2.5*δt
 Ntimestep = (tF-t0)/dt
 
-tF = 1000*dt
+ρ∞=0.5 #GeneralizedAlpha parameter, ρ∞=1 no dissipation, ρ∞ = 0 max dissipation
+
 
 initial_condition = false #print model of initial condition
 
 
+hf = VectorValue(0.0,0.0) #external force: NONE
 
 #MESH DEFINITION
 domain = (-D, D, -D, D)
@@ -73,26 +77,14 @@ pa(t::Real) = x -> pa(x, t)
 reffeᵤ = ReferenceFE(lagrangian, VectorValue{2,Float64}, order)
 V = TestFESpace(model, reffeᵤ, conformity=:H1)
 reffeₚ = ReferenceFE(lagrangian, Float64, order)
-#reffeₚ = ReferenceFE(lagrangian,Float64,order-1; space=:P)
-#reffeₚ = ReferenceFE(lagrangian, Float64, order - 1)
-#Q = TestFESpace(model,reffeₚ, conformity=:L2, constraint=:zeromean)
-#Q = TestFESpace(model,reffeₚ, conformity=:H1)
 Q = TestFESpace(model,reffeₚ, conformity=:H1, dirichlet_tags="centre")
 
-#Since we impose Dirichlet boundary conditions on the entire boundary ∂Ω, the mean value of the pressure is constrained to zero in order have a well posed problem
-#Q = TestFESpace(model, reffeₚ)
-
-
-#Transient is just for the fact that the boundary conditions change with time
 U = TrialFESpace(V)
-
-#U = TransientTrialFESpace(V)
-#P = TrialFESpace(Q) #?transient
-P = TransientTrialFESpace(Q, pa) #?transient
+P = TransientTrialFESpace(Q, pa) 
 
 
 
-Y = MultiFieldFESpace([V, Q]) #?transient
+Y = MultiFieldFESpace([V, Q]) 
 X = TransientMultiFieldFESpace([U, P])
 
 degree = 4
@@ -108,7 +100,7 @@ if initial_condition
   writevtk(Ω, "Sol_t0", cellfields=["u" => u0, "p" => p0, "ω" => ω0, "ω1" => ω1])
 end
 
-h = lazy_map(h->h^(1/2),get_cell_measure(Ω))
+#h = lazy_map(h->h^(1/2),get_cell_measure(Ω))
 
 
 
@@ -119,22 +111,21 @@ Rm(t,(u,p)) = ∂t(u) + (∇(u))'⋅u + ∇(p) - hf
 Rc(u) = ∇⋅u
 
 
-function τ(u,h)
+function τ(u)
     
-    
-    r = 1
+  h = 2*D/N #Because Mesh elements have all the same dimension, if not τ(u,h)
+    r = 1 # r=1, r = 2 Tezduyar
     τ₂ = h^2/(4*ν)
     val(x) = x
     val(x::Gridap.Fields.ForwardDiff.Dual) = x.value
-    un = val(norm(u))
+    u = val(norm(u))
     
-    if iszero(un)
+    if iszero(u)
         return τ₂
         
     end
-    τ₃ =  dt/2 #h/(2*u) 
-    τ₁ = h/(2*un) #h/(2*u) #
-    #return 1/(1/τ₁ + 1/τ₂ + 1/τ₃)
+    τ₃ =  dt/2 
+    τ₁ = h/(2*u) 
     return 1/(1/τ₁^r + 1/τ₂^r + 1/τ₃^r)
 
     
@@ -142,7 +133,7 @@ end
 
 
 #τb(u,h) = (u⋅u)*τ(u,h)
-τb(u,h) = (u⋅u)*τ(u,h) #(u⋅u)*τ(u,h)
+τb(u) = (u⋅u)*τ(u) 
 
 var_equations(t,(u,p),(v,q)) = ∫(
     ν*∇(v)⊙∇(u) # Viscous term
@@ -151,8 +142,8 @@ var_equations(t,(u,p),(v,q)) = ∫(
  )dΩ # Continuity
 
 
-stab_equations(t,(u,p),(v,q)) = ∫(  (τ∘(u,h)*(u⋅∇(v)' + ∇(q)))⊙Rm(t,(u,p)) # First term: SUPG, second term: PSPG u⋅∇(v) + ∇(q)
-    +τb∘(u,h)*(∇⋅v)⊙Rc(u) # Bulk viscosity. Try commenting out both stabilization terms to see what happens in periodic and non-periodic cases
+stab_equations(t,(u,p),(v,q)) = ∫(  (τ∘(u)*(u⋅∇(v)' + ∇(q)))⊙Rm(t,(u,p)) # First term: SUPG, second term: PSPG u⋅∇(v) + ∇(q)
+    +τb∘(u)*(∇⋅v)⊙Rc(u) # Bulk viscosity. Try commenting out both stabilization terms to see what happens in periodic and non-periodic cases
 )dΩ
 
 
@@ -171,27 +162,33 @@ U0 = U(0.0)
 P0 = P(0.0)
 X0 = X(0.0)
 
+#Initial Conditions
 uh0 = interpolate_everywhere(velocity(0), U0)
 ph0 = interpolate_everywhere(pa(0), P0)
 xh0 = interpolate_everywhere([uh0, ph0], X0)
 
 vuh0 = interpolate_everywhere(VectorValue(0,0), U0)
 vph0 = interpolate_everywhere(0, P0)
-
-
 vxh0 = interpolate_everywhere([vuh0, vph0], X0)
 
 
 
 
-ρ∞=0.5
+
 ode_solver = GeneralizedAlpha(nls,dt,ρ∞)
 sol_t = solve(ode_solver,op,(xh0,vxh0),t0,tF)
 
 
+
+
 _t_nn = t0
 iteration = 0
-createpvd("TV_2d_2") do pvd
+e_u = 10
+e_p = 10
+eu = velocity(tF) - uh0
+
+
+createpvd("TV_2d") do pvd
   for (xh_tn, tn) in sol_t
     global _t_nn
     _t_nn += dt
@@ -206,9 +203,20 @@ createpvd("TV_2d_2") do pvd
     p_analytic = pa(_t_nn)
     u_analytic = velocity(_t_nn)
     w_analytic = ωa(_t_nn)
-    #if mod(iteration, 10)<1
-      pvd[tn] = createvtk(Ω, "Results2/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "Δu" => Δu, "wh" => ωh_tn,  "wn" => ωn, "p_analytic"=>p_analytic, "u_analytic"=>u_analytic,  "w_analytic"=>w_analytic])
-    #end
+    if mod(iteration, 10)<1 #for not to print ALL the results
+      pvd[tn] = createvtk(Ω, "Results/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "Δu" => Δu, "wh" => ωh_tn,  "wn" => ωn, "p_analytic"=>p_analytic, "u_analytic"=>u_analytic,  "w_analytic"=>w_analytic])
+    end
+    if isapprox(_t_nn, tF; atol = 0.1*dt)
+      global e_u
+      global e_p 
+      eu = velocity(tF) - uh_tn
+      ep = pa(tF) - ph_tn
+      e_u = sqrt(sum( ∫( eu⋅eu )*dΩ ))
+      e_p = sqrt(sum( ∫( ep*ep )*dΩ ))
+
+    end
   end
 
 end
+e_u
+e_p

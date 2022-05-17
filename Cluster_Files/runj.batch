@@ -1,0 +1,5 @@
+#!/bin/sh
+spack load openmpi
+srun $HOME/julia-1.7.2/bin/julia -p 4 Taylor_Green_Vortex_SUPG2_Alpha_dist.jl
+
+

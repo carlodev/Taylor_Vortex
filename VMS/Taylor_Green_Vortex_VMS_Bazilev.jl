@@ -8,8 +8,8 @@ using FillArrays
 """
 Taylor Green 2D vortex
 with stabilization
-velocity 2nd order
-pressure 2st order
+velocity 1st order
+pressure 1st order
 """
 
 #Parameters
@@ -23,22 +23,25 @@ Va = 0.2 #0.2 [m/s]convective velocity in y
 
 order = 1 #Order of pressure and velocity
 N = 64; #cells per dimensions
-hf = VectorValue(0,0)
 
 #ODE settings
 cell_h = 2*D/N
-CFL = 0.032 #2*dt./h
+
+CFL = 0.32 #2*dt./h
+
 t0 = 0.0
 dt = CFL * cell_h/2 #0.0001 
-
-δt = 2*D/Vs
+δt = 2*D/Vs #Non dimensional time
 tF = 2.5*δt
+
 Ntimestep = (tF-t0)/dt
-θ = 0.5
-tF = 100*dt
+
+
+ρ∞=0.5 #GeneralizedAlpha parameter, ρ∞=1 no dissipation, ρ∞ = 0 max dissipation
 
 initial_condition = false #print model of initial condition
 
+hf = VectorValue(0.0,0.0) #external force: NONE
 
 
 #MESH DEFINITION
@@ -72,27 +75,17 @@ pa(t::Real) = x -> pa(x, t)
 reffeᵤ = ReferenceFE(lagrangian, VectorValue{2,Float64}, order)
 V = TestFESpace(model, reffeᵤ, conformity=:H1)
 reffeₚ = ReferenceFE(lagrangian,Float64, order)
-#reffeₚ = ReferenceFE(lagrangian,Float64,order-1; space=:P)
-#reffeₚ = ReferenceFE(lagrangian, Float64, order - 1)
-#Q = TestFESpace(model,reffeₚ, conformity=:L2, constraint=:zeromean)
-#Q = TestFESpace(model,reffeₚ, conformity=:L2, dirichlet_tags="interior")
 Q = TestFESpace(model,reffeₚ, conformity=:H1, dirichlet_tags="centre")
-
-#Since we impose Dirichlet boundary conditions on the entire boundary ∂Ω, the mean value of the pressure is constrained to zero in order have a well posed problem
-#Q = TestFESpace(model, reffeₚ)
-
-
-#Transient is just for the fact that the boundary conditions change with time
 U = TrialFESpace(V)
-#P = TrialFESpace(Q) #?transient
-P = TransientTrialFESpace(Q, pa) #?transient
+
+P = TransientTrialFESpace(Q, pa) 
 
 
 
-Y = MultiFieldFESpace([V, Q]) #?transient
+Y = MultiFieldFESpace([V, Q])
 X = TransientMultiFieldFESpace([U, P])
 
-degree = 2
+degree = 4
 Ω = Triangulation(model)
 dΩ = Measure(Ω, degree)
 
@@ -105,7 +98,8 @@ if initial_condition
   writevtk(Ω, "Sol_t0", cellfields=["u" => u0, "p" => p0, "ω" => ω0, "ω1" => ω1])
 end
 
-h = lazy_map(h->h^(1/2),get_cell_measure(Ω))
+
+#h = lazy_map(h->h^(1/2),get_cell_measure(Ω)) #check τ(u,h)
 
 
 #Integration Ω
@@ -119,21 +113,20 @@ Rm(t,(u,p)) = ∂t(u) + u⋅∇(u) + ∇(p) - ν*Δ(u) -hf
 Rc(u) = ∇⋅u
 
 
-Bᴳ(t,(u,p),(v,q)) = Ωint(∂t(u)⋅v) + Ωint((u⋅∇(u))⋅v) - Ωint((∇⋅v)*p) + Ωint(q*(∇⋅u)) + ν*Ωint(∇(v)⊙∇(u))
+Bᴳ(t,(u,p),(v,q)) = Ωint(∂t(u)⋅v) + Ωint((u⋅∇(u))⋅v) - Ωint((∇⋅v)*p) + Ωint(q*(∇⋅u)) + ν*Ωint(∇(v)⊙∇(u)) #Variational equations
 
-B_SUPG(t,(u,p),(v,q)) = Ωint((u⋅∇(v) + ∇(q))⋅(τ∘(u,h)*Rm(t,(u,p)))) + Ωint((∇⋅v)⋅(τb∘(u,h)*Rc(u)))
+B_SUPG(t,(u,p),(v,q)) = Ωint((u⋅∇(v) + ∇(q))⋅(τ∘(u)*Rm(t,(u,p)))) + Ωint((∇⋅v)⋅(τb∘(u)*Rc(u))) #SUPG terms
 
-B_VMS1(t,(u,p),(v,q)) = Ωint((u⋅∇(v)')⊙(τ∘(u,h)*Rm(t,(u,p))))
+B_VMS1(t,(u,p),(v,q)) = Ωint((u⋅∇(v)')⊙(τ∘(u)*Rm(t,(u,p)))) #first VMS term
 
-B_VMS2(t,(u,p),(v,q)) = -1*Ωint(∇(v)⋅(outer((τ∘(u,h)*Rm(t,(u,p))),(τ∘(u,h)*Rm(t,(u,p))))))
+#B_VMS2(t,(u,p),(v,q)) = -1*Ωint(∇(v)⊙(outer((τ∘(u,h)*Rm(t,(u,p))),(τ∘(u,h)*Rm(t,(u,p)))))) #To be added, it does not work at the moment
 
 
-Bᴹ(t,(u,p),(v,q)) = Bᴳ(t,(u,p),(v,q)) + B_SUPG(t,(u,p),(v,q)) + B_VMS1(t,(u,p),(v,q)) + B_VMS2(t,(u,p),(v,q))
+Bᴹ(t,(u,p),(v,q)) = Bᴳ(t,(u,p),(v,q)) + B_SUPG(t,(u,p),(v,q)) + B_VMS1(t,(u,p),(v,q)) #+ B_VMS2(t,(u,p),(v,q))
 
-function τ(u,h)
-  β=1
-  
-  r = 2
+function τ(u)
+  h = 2*D/N #Because Mesh elements have all the same dimension, if not τ(u,h)
+  r = 1 # r=1, r = 2 Tezduyar
   τ₂ = h.^2/(4*ν)
   val(x) = x
   val(x::Gridap.Fields.ForwardDiff.Dual) = x.value
@@ -144,12 +137,15 @@ function τ(u,h)
       
   end
   τ₃ =  dt/2 #h/(2*u) 
-  τ₁ = h/(2*β) #h/(2*u) #
-  #return 1/(1/τ₁ + 1/τ₂ + 1/τ₃)
-  return (1/τ₁^r + 1/τ₂^r + 1/τ₃^r)^(-1/r)
+  τ₁ = h/(2*u) #h/(2*u) #
+  return 1/(1/τ₁ + 1/τ₂ + 1/τ₃)
+  #return (1/τ₁^r + 1/τ₂^r + 1/τ₃^r)^(-1/r)
   
 end
-τb(u,h) = (u⋅u)*τ(u,h)
+τb(u) = (u⋅u)*τ(u)
+
+"""
+#VMS more accurate stabilization parameters
 
 function τm(u,h)
       
@@ -171,7 +167,7 @@ end
 function gi()
   
 end
-
+"""
 
 res(t,(u,p),(v,q)) = Bᴹ(t,(u,p),(v,q))
 
@@ -187,17 +183,18 @@ U0 = U(0.0)
 P0 = P(0.0)
 X0 = X(0.0)
 
+#Initial conditions
 uh0 = interpolate_everywhere(velocity(0), U0)
 ph0 = interpolate_everywhere(pa(0), P0)
-
 xh0 = interpolate_everywhere([uh0, ph0], X0)
 
+vuh0 = interpolate_everywhere(VectorValue(0,0), U0)
+vph0 = interpolate_everywhere(0, P0)
+vxh0 = interpolate_everywhere([vuh0, vph0], X0)
 
 
-
-ode_solver = ThetaMethod(nls, dt, θ)
-
-sol_t = solve(ode_solver, op, xh0, t0, tF)
+ode_solver = GeneralizedAlpha(nls,dt,ρ∞)
+sol_t = solve(ode_solver,op,(xh0,vxh0),t0,tF)
 
 
 _t_nn = t0
@@ -216,7 +213,6 @@ createpvd("TV_2d") do pvd
     p_analytic = pa(_t_nn)
     u_analytic = velocity(_t_nn)
     w_analytic = ωa(_t_nn)
-    Rm(t,(uh,ph)) = ∂t(u) + u⋅∇(u) + ∇(p) - hf
     #if mod(iteration, 10)<1
       pvd[tn] = createvtk(Ω, "Results/TV_2d_$_t_nn" * ".vtu", cellfields=["uh" => uh_tn, "ph" => ph_tn, "wh" => ωh_tn,  "wn" => ωn, "p_analytic"=>p_analytic, "u_analytic"=>u_analytic,  "w_analytic"=>w_analytic])
     #end
